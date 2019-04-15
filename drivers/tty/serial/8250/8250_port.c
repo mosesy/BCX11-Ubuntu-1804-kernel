@@ -1869,6 +1869,13 @@ int serial8250_handle_irq(struct uart_port *port, unsigned int iir)
 	spin_lock_irqsave(&port->lock, flags);
 
 	status = serial_port_in(port, UART_LSR);
+	/*
+	 * Workaround for when there is a character timeout interrupt
+	 * but the data ready bit is not set in the Line Status Register.
+	 */
+	if ((iir & UART_IIR_RX_TIMEOUT) &&
+	    !(status & (UART_LSR_DR | UART_LSR_BI)))
+		status |= UART_LSR_DR;
 
 	if (status & (UART_LSR_DR | UART_LSR_BI) &&
 	    iir & UART_IIR_RDI) {
