@@ -635,7 +635,7 @@ static int snd_cht_mc_probe(struct platform_device *pdev)
 
 		if (!pkg_found) {
 			/* no BIOS indications, assume SSP0-AIF2 connection */
-			cht_rt5645_quirk |= CHT_RT5645_SSP0_AIF2;
+			cht_rt5645_quirk |= CHT_RT5645_SSP0_AIF1;
 		}
 	}
 
