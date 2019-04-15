@@ -300,12 +300,15 @@ static int dw_i2c_plat_probe(struct platform_device *pdev)
 	 * Find bus speed from the "clock-frequency" device property, ACPI
 	 * or by using fast mode if neither is set.
 	 */
+/* force standard mode at 100KHz
 	if (acpi_speed && dev->clk_freq)
 		dev->clk_freq = min(dev->clk_freq, acpi_speed);
 	else if (acpi_speed || dev->clk_freq)
 		dev->clk_freq = max(dev->clk_freq, acpi_speed);
 	else
 		dev->clk_freq = 400000;
+*/
+	dev->clk_freq = 100000;
 
 	if (has_acpi_companion(&pdev->dev))
 		dw_i2c_acpi_configure(pdev);
