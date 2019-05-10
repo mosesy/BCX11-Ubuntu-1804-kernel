@@ -234,6 +234,7 @@ static void dw_i2c_plat_pm_cleanup(struct dw_i2c_dev *dev)
 	if (dev->pm_disabled)
 		pm_runtime_put_noidle(dev->dev);
 }
+static int i2c_count = 0;
 
 static int dw_i2c_plat_probe(struct platform_device *pdev)
 {
@@ -300,15 +301,15 @@ static int dw_i2c_plat_probe(struct platform_device *pdev)
 	 * Find bus speed from the "clock-frequency" device property, ACPI
 	 * or by using fast mode if neither is set.
 	 */
-/* force standard mode at 100KHz
 	if (acpi_speed && dev->clk_freq)
 		dev->clk_freq = min(dev->clk_freq, acpi_speed);
 	else if (acpi_speed || dev->clk_freq)
 		dev->clk_freq = max(dev->clk_freq, acpi_speed);
 	else
 		dev->clk_freq = 400000;
-*/
-	dev->clk_freq = 100000;
+	/* only force 3rd I2c to 100KHz */
+	if(i2c_count == 2)
+		dev->clk_freq = 100000;
 
 	if (has_acpi_companion(&pdev->dev))
 		dw_i2c_acpi_configure(pdev);
@@ -378,6 +379,7 @@ static int dw_i2c_plat_probe(struct platform_device *pdev)
 	if (ret)
 		goto exit_probe;
 
+	i2c_count++;
 	return ret;
 
 exit_probe:
