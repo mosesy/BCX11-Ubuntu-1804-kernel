@@ -175,6 +175,15 @@ struct snd_soc_acpi_mach  snd_soc_acpi_intel_baytrail_machines[] = {
 		.sof_tplg_filename = "intel/reef-byt-rt5645.tplg",
 		.asoc_plat_name = "sst-mfld-platform",
 	},
+	{
+		.id = "10EC5672",
+		.drv_name = "cht-bsw-rt5672",
+		.fw_filename = "intel/fw_sst_0f28.bin",
+		.board = "cht-bsw",
+		.sof_fw_filename = "intel/reef-byt.ri",
+		.sof_tplg_filename = "intel/reef-byt-rt5670.tplg",
+		.asoc_plat_name = "sst-mfld-platform",
+	},
 	/* use CHT driver to Baytrail Chromebooks */
 	{
 		.id = "193C9890",
