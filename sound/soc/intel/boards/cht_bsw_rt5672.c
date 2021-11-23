@@ -20,6 +20,7 @@
 #include <linux/platform_device.h>
 #include <linux/slab.h>
 #include <linux/clk.h>
+#include <asm/cpu_device_id.h>
 #include <sound/pcm.h>
 #include <sound/pcm_params.h>
 #include <sound/soc.h>
@@ -37,6 +38,7 @@ struct cht_mc_private {
 	struct snd_soc_jack headset;
 	char codec_name[SND_ACPI_I2C_ID_LEN];
 	struct clk *mclk;
+	bool use_ssp0;
 };
 
 /* Headset jack detection DAPM pins */
@@ -127,16 +129,26 @@ static const struct snd_soc_dapm_route cht_audio_map[] = {
 	{"Ext Spk", NULL, "SPOLN"},
 	{"Ext Spk", NULL, "SPORP"},
 	{"Ext Spk", NULL, "SPORN"},
+	{"Headphone", NULL, "Platform Clock"},
+	{"Headset Mic", NULL, "Platform Clock"},
+	{"Int Mic", NULL, "Platform Clock"},
+	{"Ext Spk", NULL, "Platform Clock"},
+};
+
+static const struct snd_soc_dapm_route cht_audio_ssp0_map[] = {
+	{"AIF1 Playback", NULL, "ssp0 Tx"},
+	{"ssp0 Tx", NULL, "modem_out"},
+	{"modem_in", NULL, "ssp0 Rx"},
+	{"ssp0 Rx", NULL, "AIF1 Capture"},
+};
+
+static const struct snd_soc_dapm_route cht_audio_ssp2_map[] = {
 	{"AIF1 Playback", NULL, "ssp2 Tx"},
 	{"ssp2 Tx", NULL, "codec_out0"},
 	{"ssp2 Tx", NULL, "codec_out1"},
 	{"codec_in0", NULL, "ssp2 Rx"},
 	{"codec_in1", NULL, "ssp2 Rx"},
 	{"ssp2 Rx", NULL, "AIF1 Capture"},
-	{"Headphone", NULL, "Platform Clock"},
-	{"Headset Mic", NULL, "Platform Clock"},
-	{"Int Mic", NULL, "Platform Clock"},
-	{"Ext Spk", NULL, "Platform Clock"},
 };
 
 static const struct snd_kcontrol_new cht_mc_controls[] = {
@@ -203,6 +215,18 @@ static int cht_codec_init(struct snd_soc_pcm_runtime *runtime)
 				| RT5670_AD_MONO_R_FILTER,
 				RT5670_CLK_SEL_I2S1_ASRC);
 
+	if (ctx->use_ssp0) {
+		ret = snd_soc_dapm_add_routes(&runtime->card->dapm,
+					      cht_audio_ssp0_map,
+					      ARRAY_SIZE(cht_audio_ssp0_map));
+	} else {
+		ret = snd_soc_dapm_add_routes(&runtime->card->dapm,
+					      cht_audio_ssp2_map,
+					      ARRAY_SIZE(cht_audio_ssp2_map));
+	}
+	if (ret)
+		return ret;
+
         ret = snd_soc_card_jack_new(runtime->card, "Headset",
 				    SND_JACK_HEADSET | SND_JACK_BTN_0 |
 				    SND_JACK_BTN_1 | SND_JACK_BTN_2,
@@ -241,18 +265,26 @@ static int cht_codec_init(struct snd_soc_pcm_runtime *runtime)
 static int cht_codec_fixup(struct snd_soc_pcm_runtime *rtd,
 			    struct snd_pcm_hw_params *params)
 {
+	struct cht_mc_private *ctx = snd_soc_card_get_drvdata(rtd->card);
 	struct snd_interval *rate = hw_param_interval(params,
 			SNDRV_PCM_HW_PARAM_RATE);
 	struct snd_interval *channels = hw_param_interval(params,
 						SNDRV_PCM_HW_PARAM_CHANNELS);
-	int ret;
+	int ret, bits;
 
 	/* The DSP will covert the FE rate to 48k, stereo, 24bits */
 	rate->min = rate->max = 48000;
 	channels->min = channels->max = 2;
 
-	/* set SSP2 to 24-bit */
-	params_set_format(params, SNDRV_PCM_FORMAT_S24_LE);
+	if (ctx->use_ssp0) {
+		/* set SSP0 to 16-bit */
+		params_set_format(params, SNDRV_PCM_FORMAT_S16_LE);
+		bits = 16;
+	} else {
+		/* set SSP2 to 24-bit */
+		params_set_format(params, SNDRV_PCM_FORMAT_S24_LE);
+		bits = 24;
+	}
 
 	/*
 	 * Default mode for SSP configuration is TDM 4 slot. One board/design,
@@ -281,10 +313,10 @@ static int cht_codec_fixup(struct snd_soc_pcm_runtime *rtd,
 		return ret;
 	}
 
-	/* TDM 4 slots 24 bit, set Rx & Tx bitmask to 4 active slots */
-	ret = snd_soc_dai_set_tdm_slot(rtd->codec_dai, 0xF, 0xF, 4, 24);
+
+	ret = snd_soc_dai_set_tdm_slot(rtd->cpu_dai, 0x3, 0x3, 2, bits);
 	if (ret < 0) {
-		dev_err(rtd->dev, "can't set codec TDM slot %d\n", ret);
+		dev_err(rtd->dev, "can't set I2S config, err %d\n", ret);
 		return ret;
 	}
 
@@ -403,6 +435,18 @@ static struct snd_soc_card snd_soc_card_cht = {
 	.resume_post = cht_resume_post,
 };
 
+static bool is_valleyview(void)
+{
+       static const struct x86_cpu_id cpu_ids[] = {
+               { X86_VENDOR_INTEL, 6, 55 }, /* Valleyview, Bay Trail */
+               {}
+       };
+
+       if (!x86_match_cpu(cpu_ids))
+               return false;
+       return true;
+}
+
 #define RT5672_I2C_DEFAULT	"i2c-10EC5670:00"
 
 static int snd_cht_mc_probe(struct platform_device *pdev)
@@ -411,6 +455,7 @@ static int snd_cht_mc_probe(struct platform_device *pdev)
 	struct cht_mc_private *drv;
 	struct snd_soc_acpi_mach *mach = pdev->dev.platform_data;
 	const char *i2c_name;
+	int dai_index = 0;
 	int i;
 
 	drv = devm_kzalloc(&pdev->dev, sizeof(*drv), GFP_ATOMIC);
@@ -430,10 +475,16 @@ static int snd_cht_mc_probe(struct platform_device *pdev)
 					    RT5672_I2C_DEFAULT)) {
 					cht_dailink[i].codec_name =
 						drv->codec_name;
+					dai_index = i;
 					break;
 				}
 			}
 		}
+	}
+	/* Use SSP0 on Bay Trail CR devices */
+	if (is_valleyview()) {
+		cht_dailink[dai_index].cpu_dai_name = "ssp0-port";
+		drv->use_ssp0 = true;
 	}
 
 	drv->mclk = devm_clk_get(&pdev->dev, "pmc_plt_clk_3");
